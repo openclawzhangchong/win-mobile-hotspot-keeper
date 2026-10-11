@@ -1,11 +1,32 @@
 # Windows 移动热点保活 · Mobile Hotspot Keeper
 
+**当前版本：v1.1.0** ｜ [变更记录 CHANGELOG](CHANGELOG.md)
+
 让 Windows 的**移动热点（Mobile Hotspot）**开机登录后自动开启，并周期复查保活——
 热点被系统或其它软件关掉了，会自动重新打开。
 
 附带一个**双击即用的桌面批处理器**，换到别的电脑、没装计划任务时也能一键开热点。
 
 > 只用 Windows 自带的 WinRT API，**不装任何第三方软件、不改注册表、不装驱动**。
+
+---
+
+## 版本变更速览
+
+### v1.1.0（2026-10-11）— 修复「后台运行不彻底」
+
+v1.0 运行一天后暴露两个问题，均已修复：
+
+| 问题 | 原因 | 修复 |
+|---|---|---|
+| **屏幕每隔 5 分钟闪一下黑框** | 计划任务直接调用 `powershell.exe`。即使加 `-WindowStyle Hidden`，控制台程序在进程启动的最初几毫秒**必然创建窗口**，然后才隐藏 | 新增 `run-hotspot.vbs` 静默启动器，用 `WScript.Shell.Run(cmd, 0, True)` **从进程创建起就无窗口**；计划任务改为经它调用 |
+| **日志一天涨 288 行** | 每次运行都写一行 | 静默模式下**只在热点状态变化时记录**，正常时零写入 |
+
+### v1.0.0（2026-10-10）
+
+首个公开版本：WinRT 检测并开启移动热点、一键安装计划任务、桌面双击启动器。
+
+> 完整变更说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -231,6 +252,7 @@ Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -Fil
 | `hotspot-on.ps1` | 核心脚本：检测并开启移动热点（幂等） |
 | `run-hotspot.vbs` | **静默启动器**：以零窗口方式调用核心脚本，消除黑框闪烁 |
 | `install.ps1` | 安装 / 卸载器：注册计划任务、生成桌面启动器 |
+| `CHANGELOG.md` | 版本变更记录 |
 | `task.xml` | 安装时自动生成的计划任务定义（存档，便于排查） |
 | `hotspot.log` | 运行日志（安装后生成；只在状态变化时记录） |
 
