@@ -6,6 +6,10 @@
       2. 每 5 分钟自动复查一次，热点被关闭则自动重开（保活）
       3. 在桌面生成一个双击即用的快捷启停器
 
+    静默说明：计划任务不直接调用 powershell.exe（那会瞬间闪一个黑框），
+    而是经由 run-hotspot.vbs（WScript.Shell.Run 窗口模式 0）真正零窗口启动，
+    屏幕上不会出现任何闪烁。
+
     用法（以管理员身份运行 Windows PowerShell 5.1）：
         powershell -ExecutionPolicy Bypass -File install.ps1
 
@@ -42,6 +46,7 @@ function Assert-Admin {
 
 $here      = Split-Path -Parent $PSCommandPath
 $mainPs1   = Join-Path $here 'hotspot-on.ps1'
+$vbsPath   = Join-Path $here 'run-hotspot.vbs'
 $logPath   = Join-Path $here 'hotspot.log'
 $desktop   = [Environment]::GetFolderPath('Desktop')
 $launcher  = Join-Path $desktop '开启移动热点.bat'
@@ -85,12 +90,17 @@ if (-not (Test-Path $mainPs1)) {
     Write-Host "[ERROR] 找不到主脚本：$mainPs1" -ForegroundColor Red
     exit 1
 }
+if (-not (Test-Path $vbsPath)) {
+    Write-Host "[ERROR] 找不到静默启动器：$vbsPath" -ForegroundColor Red
+    exit 1
+}
 
 $ps51     = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $currentUser    = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 Write-Host "主脚本      : $mainPs1"
+Write-Host "静默启动器  : $vbsPath"
 Write-Host "日志        : $logPath"
 Write-Host "运行账户    : $currentUser"
 Write-Host "保活间隔    : 每 $IntervalMinutes 分钟"
@@ -148,8 +158,8 @@ $xml = @"
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>$ps51</Command>
-      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$mainPs1" -Quiet -LogFile "$logPath"</Arguments>
+      <Command>$env:SystemRoot\System32\wscript.exe</Command>
+      <Arguments>//B //Nologo "$vbsPath"</Arguments>
     </Exec>
   </Actions>
 </Task>

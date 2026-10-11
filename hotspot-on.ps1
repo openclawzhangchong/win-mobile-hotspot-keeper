@@ -17,8 +17,13 @@
     参数：
       -Ssid <string>        可选。要写入的热点名称；省略则沿用现有配置。
       -Passphrase <string>  可选。热点密码（8-63 位）；省略则沿用现有配置。
-      -Quiet                静默模式：只输出最终结果，供计划任务使用。
+      -Quiet                静默模式：仅记录「状态发生变化」与异常，
+                            热点本就开着时完全不写日志（避免日志膨胀）；
+                            供计划任务使用。
       -LogFile <path>       可选。把日志同时追加写入该文件。
+
+    建议由 run-hotspot.vbs 调用（VBS 用 Run(...,0,...) 可实现真正零窗口，
+    彻底消除计划任务触发时的瞬时黑框闪烁）。
 
     退出码：
       0 = 热点最终处于开启状态（成功）
@@ -40,8 +45,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Write-Log {
-    param([string]$Message, [string]$Level = 'INFO')
-    if ($Quiet -and $Level -eq 'INFO') { return }
+    param([string]$Message, [string]$Level = 'INFO', [switch]$Always)
+    # 规则：
+    #   非 Quiet 模式  -> 全部输出（手动运行时看着清楚）
+    #   Quiet 模式     -> 默认只写 WARN/ERROR/OK（状态变化或异常）
+    #                     加 -Always 可强制写入（用于关键节点）
+    if ($Quiet -and -not $Always) {
+        if ($Level -eq 'INFO' -or $Level -eq 'DEBUG') { return }
+    }
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$ts] [$Level] $Message"
     Write-Host $line
@@ -106,9 +117,10 @@ try {
     Write-Log "当前热点状态：$stateBefore"
 
     # ---------- 4. 已开则直接成功返回 ----------
+    # 注意：这是"无事发生"的正常路径。静默模式（计划任务）下不写日志，
+    #       否则每 5 分钟一行，日志会无限膨胀。
     if ($stateBefore -eq 'On') {
         Write-Log "热点已处于开启状态，跳过。当前连接设备数：$($tm.ClientCount)"
-        Write-Log -Message "完成：热点已开启。" -Level 'OK'
         exit 0
     }
 

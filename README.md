@@ -28,10 +28,12 @@ Windows 自带的「移动热点」（设置 → 网络和 Internet → 移动�
 - **纯系统能力**：基于 `Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager`（WinRT），
   调的就是系统设置里那个开关，最正宗。
 - **不碰已废弃的 netsh**：`netsh wlan hostednetwork` 在现代网卡上早已失效，本工具不依赖它。
+- **真正零窗口 / 不闪屏**：计划任务经由 VBScript 启动器（`WScript.Shell.Run` 窗口模式 `0`）调用，
+  屏幕上**不会有任何黑框闪烁**（直接调 `powershell.exe` 即使加 `-WindowStyle Hidden` 也会瞬闪一下）。
+- **日志不膨胀**：静默模式下**只在热点状态发生变化时**写一行；热点一直正常时不写。
 - **零残留**：一条命令安装，一条命令卸载。
 - **不改你的热点配置**：默认沿用系统里现有的 SSID 和密码，只负责「开」，不偷偷改设置。
 - **可选覆盖**：需要的话可以指定 SSID / 密码（见下文）。
-- **日志可查**：每次运行都写日志，成功失败一目了然。
 
 ---
 
@@ -51,7 +53,8 @@ Windows 自带的「移动热点」（设置 → 网络和 Internet → 移动�
 
 ### 安装（一键）
 
-1. 把整个文件夹放到一个**固定位置**，例如 `C:\Tools\win-mobile-hotspot-keeper`
+1. 把**整个文件夹**（`hotspot-on.ps1`、`run-hotspot.vbs`、`install.ps1` 三个文件缺一不可）
+   放到一个**固定位置**，例如 `C:\Tools\win-mobile-hotspot-keeper`
    （放好后别再挪动，计划任务里记的是绝对路径）。
 2. 在该文件夹里**以管理员身份**打开 Windows PowerShell，执行：
 
@@ -61,7 +64,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 安装器会自动完成：
 
-- 注册计划任务（登录后 30 秒触发 + 每 5 分钟复查保活）
+- 注册计划任务（登录后 30 秒触发 + 每 5 分钟复查保活），经 VBS 静默调用，**不闪屏**
 - 在桌面生成启动器 `开启移动热点.bat`
 - 立刻跑一次验证，并打印结果
 
@@ -128,19 +131,27 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -NoDesktopShortcut
 ## 工作原理
 
 ```
-hotspot-on.ps1
+任务计划程序（登录时 + 每 N 分钟）
    │
-   ├─ 1. 校验环境（PS 5.1 + 管理员）
-   ├─ 2. 加载 WinRT，定位当前联网连接（以太网 / WiFi）
-   ├─ 3. 创建 NetworkOperatorTetheringManager
-   ├─ 4. 读 TetheringOperationalState
-   │        ├─ On  → 直接成功退出（幂等）
-   │        └─ Off → 继续
-   ├─ 5. 如需改 SSID/密码 → ConfigureAccessPointAsync
-   └─ 6. StartTetheringAsync → 复查状态 → 写日志
+   └─ wscript.exe //B //Nologo run-hotspot.vbs      ← 无窗口
+          │
+          └─ WScript.Shell.Run(powershell.exe ..., 0, True)   ← 窗口模式 0 = 完全隐藏
+                 │
+                 └─ hotspot-on.ps1（Windows PowerShell 5.1）
+                      │
+                      ├─ 1. 校验环境（PS 5.1 + 管理员）
+                      ├─ 2. 加载 WinRT，定位当前联网连接（以太网 / WiFi）
+                      ├─ 3. 创建 NetworkOperatorTetheringManager
+                      ├─ 4. 读 TetheringOperationalState
+                      │        ├─ On  → 直接退出（幂等，且不写日志）
+                      │        └─ Off → 继续
+                      ├─ 5. 如需改 SSID/密码 → ConfigureAccessPointAsync
+                      └─ 6. StartTetheringAsync → 复查状态 → 写一行 OK 日志
 ```
 
 计划任务负责定时唤起这个脚本；脚本本身是**幂等**的，重复跑多少次都安全。
+**VBS 这一层是消除黑框闪烁的关键**——直接让计划任务调 `powershell.exe`，
+即使指定 `-WindowStyle Hidden`，仍会瞬闪一个控制台窗口。
 
 ---
 
@@ -165,12 +176,29 @@ hotspot-on.ps1
 
 不会。默认**沿用现有配置**，只负责开。只有你显式传 `-Ssid` / `-Passphrase` 时才会写入。
 
+### Q：屏幕上会闪一个黑框吗？
+
+**不会（v1.1 起）**。计划任务不直接调用 `powershell.exe`——那即使加 `-WindowStyle Hidden`，
+Windows 在进程启动的最初几毫秒仍会创建控制台窗口，表现为「黑框一闪」。
+本工具改为经 `run-hotspot.vbs` 调用，`WScript.Shell.Run(cmd, 0, True)` 的第 2 个参数 `0`
+表示**窗口完全不显示**，屏幕上没有任何闪烁。
+
+> 升级提示：如果你是从 v1.0（直接调 powershell 的版本）升级，重新跑一次 `install.ps1`
+> 即可把计划任务切换到 VBS 启动器。
+
 ### Q：日志一直增长怎么办？
 
-`hotspot.log` 每次复查追加一行。日积月累会变大，可以：
-- 直接把日志改成**只记内容**（默认 `-Quiet` 模式下每次只写一行最终结果，增长很慢）；
-- 或定期手动清空；
-- 或调大 `-IntervalMinutes`（比如 15 分钟）减少频率。
+**默认已经不会了（v1.1 起）**。静默模式（计划任务用的 `-Quiet`）下：
+
+- 热点**本就正常开着** → **不写任何日志**（这是绝大多数情况）；
+- 热点**被关、脚本把它重新打开** → 写一行 `[OK] 完成：热点已开启`；
+- 出异常 → 写 `[ERROR]`。
+
+也就是说日志**只记录真正发生的事**，稳定运行一天通常只有几行。
+如果还想进一步控制，可以：
+
+- 定期手动清空 `hotspot.log`；
+- 或调大 `-IntervalMinutes`（比如 15 分钟）减少检查频率。
 
 ### Q：任务没跑起来 / 热点没自动开？
 
@@ -201,9 +229,10 @@ Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -Fil
 | 文件 | 说明 |
 |---|---|
 | `hotspot-on.ps1` | 核心脚本：检测并开启移动热点（幂等） |
+| `run-hotspot.vbs` | **静默启动器**：以零窗口方式调用核心脚本，消除黑框闪烁 |
 | `install.ps1` | 安装 / 卸载器：注册计划任务、生成桌面启动器 |
 | `task.xml` | 安装时自动生成的计划任务定义（存档，便于排查） |
-| `hotspot.log` | 运行日志（安装后生成） |
+| `hotspot.log` | 运行日志（安装后生成；只在状态变化时记录） |
 
 ---
 
@@ -213,8 +242,13 @@ Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -Fil
 - Windows PowerShell 5.1.26100
 - 网卡：Realtek 8822CE Wireless LAN 802.11ac PCI-E NIC
 
-实测结论：热点**关闭**状态下运行脚本，能成功开启（状态 `Off → On`）；
-计划任务手动触发返回 `LastResult=0`，日志正常写入。
+实测结论：
+
+- 热点**关闭**状态下运行脚本，能成功开启（状态 `Off → On`）；
+- 计划任务手动触发返回 `LastResult=0`，日志按预期写入；
+- 经 VBS 静默启动器调用时，**窗口完全不显示**（`wscript` 退出码 0）；
+- 静默模式下热点一直正常时，**日志零增长**（241 → 241 行）；
+  热点被关并经脚本重开后，**只新增一行** `[OK] 完成：热点已开启`。
 
 ---
 
